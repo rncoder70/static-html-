@@ -55,7 +55,7 @@
     .header-phone {
       font-weight: 700;
       font-size: 19px;
-      color: var(--brand);
+      color: #AD2542;
       white-space: nowrap;
     }
 
@@ -172,7 +172,7 @@
       padding: 16px 20px;
       border: none;
       border-radius: 5px;
-      background: #d42d4c;
+      background: #AD2542;
       color: #ffffff;
       font: inherit;
       font-size: clamp(1.05rem, 1.8vw, 1.6rem);
@@ -189,8 +189,17 @@
     .save-btn.disabled {
       opacity: 0.5;
       cursor: not-allowed;
-      background: #d42d4c;
+      background: #AD2542;
     }
+
+    .api-status {
+      margin-top: 12px;
+      text-align: center;
+      font-size: 0.9rem;
+    }
+
+    .api-status.error { color: var(--brand); }
+    .api-status.success { color: #1e6b3a; }
 
     .call-action {
       margin-top: 30px;
@@ -217,7 +226,7 @@
 
     .call-now {
       display: inline-block;
-      color: #d42d4c;
+      color: #AD2542;
       font-size: clamp(1.8rem, 2.6vw, 2.5rem);
       font-weight: 800;
       line-height: 1.2;
@@ -304,7 +313,7 @@
     <a href="/" class="logo" aria-label="Village Capital &amp; Investment LLC home">
       <img src="images/logo.png" alt="Village Capital &amp; Investment LLC" width="380" height="65">
     </a>
-    <a href="tel:18002223333" class="header-phone">1-800-222-3333</a>
+    <a href="tel:18002223333" class="header-phone">8664570233</a>
   </header>
 
   <main>
@@ -317,7 +326,7 @@
         specialists will be in contact shortly.
       </p>
 
-      <div class="contact-panel">
+      <div class="contact-panel" hidden>
         <h2>We have your contact information as:</h2>
         <p class="change-note">Need to make a change? You can update it below.</p>
 
@@ -325,33 +334,34 @@
           <div class="form-row">
             <label class="field">
               <span>First Name</span>
-              <input type="text" value="Aaron" aria-label="First Name" class="field-input">
+              <input type="text" aria-label="First Name" class="field-input">
             </label>
 
             <label class="field">
               <span>Last Name</span>
-              <input type="text" value="Timpson" aria-label="Last Name" class="field-input">
+              <input type="text" aria-label="Last Name" class="field-input">
             </label>
           </div>
 
           <label class="field">
             <span>Email</span>
-            <input type="email" value="aaron@example.com" aria-label="Email" class="field-input">
+            <input type="email" aria-label="Email" class="field-input">
           </label>
 
           <label class="field">
             <span>Phone Number</span>
-            <input type="tel" value="(151) 561-5615" aria-label="Phone Number" class="field-input">
+            <input type="tel" aria-label="Phone Number" class="field-input">
           </label>
 
           <button class="save-btn disabled" type="button">Save Changes</button>
         </form>
       </div>
+      <p class="api-status" role="status" aria-live="polite" hidden></p>
 
       <div class="call-action">
         <h3>Rather than waiting, you can call us now</h3>
         <p>to review your refinance options and take advantage of today&rsquo;s rates.</p>
-        <a href="tel:18002223333" class="call-now">Call Now: 1-800-222-3333</a>
+        <a href="tel:18002223333" class="call-now">Call Now: 8664570233</a>
       </div>
     </section>
   </main>
@@ -364,7 +374,23 @@
   <script>
     (function () {
       var saveBtn = document.querySelector('.save-btn');
+      var form = document.querySelector('.contact-form');
       var formInputs = document.querySelectorAll('.field-input');
+      var firstNameInput = document.querySelector('input[aria-label="First Name"]');
+      var lastNameInput = document.querySelector('input[aria-label="Last Name"]');
+      var emailInput = document.querySelector('input[aria-label="Email"]');
+      var phoneInput = document.querySelector('input[aria-label="Phone Number"]');
+      var statusMessage = document.querySelector('.api-status');
+      var contactPanel = document.querySelector('.contact-panel');
+      // Decode the signed create endpoint provided in the page query string.
+      const params = new URLSearchParams(window.location.search);
+      const encodedCreateUrl = params.get('create_url');
+      const createUrl = encodedCreateUrl ? atob(encodedCreateUrl) : null;
+      var updateUrl = null;
+      var leadId = null;
+      var originalValues = null;
+      var isBusy = false;
+      var cacheKey = 'redo-servicing-digital:' + JSON.stringify([createUrl]);
 
       function isValidPhoneNumber(value) {
         var digits = (value || '').replace(/\D/g, '');
@@ -380,32 +406,163 @@
       }
 
       function updateSaveButtonState() {
-        var hasAnyValue = false;
-        var phoneInput = document.querySelector('input[type="tel"]');
-        var emailInput = document.querySelector('input[type="email"]');
-
-        formInputs.forEach(function (input) {
-          if (input.value && input.value.trim() !== '') {
-            hasAnyValue = true;
-          }
+        var currentValues = readFormValues();
+        var hasSaveableChange = originalValues && ['first_name', 'last_name', 'email', 'phone'].some(function (field) {
+          return currentValues[field] && currentValues[field] !== originalValues[field];
         });
 
         if (phoneInput && phoneInput.value.trim() !== '' && !isValidPhoneNumber(phoneInput.value)) {
-          hasAnyValue = false;
+          hasSaveableChange = false;
         }
 
         if (emailInput && emailInput.value.trim() !== '' && !emailInput.checkValidity()) {
-          hasAnyValue = false;
+          hasSaveableChange = false;
         }
 
-        saveBtn.classList.toggle('disabled', !hasAnyValue);
-        saveBtn.disabled = !hasAnyValue;
+        var isDisabled = !leadId || !updateUrl || isBusy || !hasSaveableChange;
+        saveBtn.classList.toggle('disabled', isDisabled);
+        saveBtn.disabled = isDisabled;
+      }
+
+      function readFormValues() {
+        return {
+          first_name: firstNameInput.value.trim(),
+          last_name: lastNameInput.value.trim(),
+          email: emailInput.value.trim(),
+          phone: phoneInput.value.replace(/\D/g, '')
+        };
+      }
+
+      function applyLeadData(data) {
+        firstNameInput.value = data.first_name == null ? '' : String(data.first_name);
+        lastNameInput.value = data.last_name == null ? '' : String(data.last_name);
+        emailInput.value = data.email == null ? '' : String(data.email);
+        phoneInput.value = formatPhoneNumber(data.phone == null ? '' : String(data.phone));
+        originalValues = readFormValues();
+        contactPanel.hidden = ![firstNameInput, lastNameInput, emailInput, phoneInput].some(function (input) {
+          return input.value.trim() !== '';
+        });
+      }
+
+      function showStatus(message, state) {
+        statusMessage.textContent = message;
+        statusMessage.className = 'api-status ' + state;
+        statusMessage.hidden = !message;
+      }
+
+      function isApiEndpoint(url, path, expectedOrigin) {
+        try {
+          var parsedUrl = new URL(url);
+          return parsedUrl.protocol === 'https:' && parsedUrl.origin === expectedOrigin && parsedUrl.pathname === path;
+        } catch (error) {
+          return false;
+        }
+      }
+
+      function readCachedLead() {
+        if (!cacheKey) return null;
+
+        try {
+          var cached = JSON.parse(sessionStorage.getItem(cacheKey) || 'null');
+          if (cached && cached.leadId && Date.now() - cached.savedAt < 3 * 60 * 60 * 1000) {
+            return cached;
+          }
+        } catch (error) {
+          return null;
+        }
+
+        return null;
+      }
+
+      function cacheLead() {
+        try {
+          sessionStorage.setItem(cacheKey, JSON.stringify({
+            leadId: leadId,
+            updateUrl: updateUrl,
+            data: originalValues,
+            savedAt: Date.now()
+          }));
+        } catch (error) {
+          return;
+        }
+      }
+
+      async function readApiResponse(response) {
+        var result;
+        try {
+          result = await response.json();
+        } catch (error) {
+          result = {};
+        }
+
+        if (!response.ok || result.error) {
+          throw new Error(result.message || 'The request could not be completed. Please try again.');
+        }
+
+        return result;
+      }
+
+      async function initializeLead() {
+        var createOrigin = null;
+        try {
+          createOrigin = new URL(createUrl).origin;
+        } catch (error) {
+          showStatus('', '');
+          updateSaveButtonState();
+          return;
+        }
+
+        if (!isApiEndpoint(createUrl, '/redo-servicing-digital/create', createOrigin) || (updateUrl && !isApiEndpoint(updateUrl, '/redo-servicing-digital/update', createOrigin))) {
+          showStatus('', '');
+          updateSaveButtonState();
+          return;
+        }
+
+        var cached = readCachedLead();
+        if (cached) {
+          leadId = cached.leadId;
+          updateUrl = isApiEndpoint(cached.updateUrl, '/redo-servicing-digital/update', createOrigin) ? cached.updateUrl : null;
+          applyLeadData(cached.data || {});
+          showStatus('', '');
+          updateSaveButtonState();
+          return;
+        }
+
+        isBusy = true;
+        formInputs.forEach(function (input) { input.disabled = true; });
+        showStatus('', '');
+        updateSaveButtonState();
+
+        try {
+          var response = await fetch(createUrl, {
+            method: 'POST',
+            headers: { Accept: 'application/json' }
+          });
+          var result = await readApiResponse(response);
+
+          if (!result.data || !result.data.lead_id) {
+            throw new Error('The lead was created, but no lead ID was returned. Please reopen this page.');
+          }
+
+          leadId = result.data.lead_id;
+          updateUrl = isApiEndpoint(result.update_url, '/redo-servicing-digital/update', createOrigin) ? result.update_url : null;
+          applyLeadData(result.data);
+          cacheLead();
+          showStatus('', '');
+        } catch (error) {
+          showStatus('', '');
+        } finally {
+          isBusy = false;
+          formInputs.forEach(function (input) { input.disabled = false; });
+          updateSaveButtonState();
+        }
       }
 
       function handlePhoneInput(event) {
         var input = event.target;
         input.value = formatPhoneNumber(input.value);
 
+        showStatus('', '');
         updateSaveButtonState();
       }
 
@@ -428,7 +585,48 @@
 
         var newCursor = formatPhoneNumber(digits.slice(0, digitsBeforeCursor - 1)).length;
         input.setSelectionRange(newCursor, newCursor);
+        showStatus('', '');
         updateSaveButtonState();
+      }
+
+      async function handleSave() {
+        if (!leadId || isBusy || saveBtn.disabled) return;
+
+        var values = readFormValues();
+        var payload = { lead_id: leadId };
+        ['first_name', 'last_name', 'email', 'phone'].forEach(function (field) {
+          if (values[field] && values[field] !== originalValues[field]) {
+            payload[field] = values[field];
+          }
+        });
+
+        isBusy = true;
+        formInputs.forEach(function (input) { input.disabled = true; });
+        showStatus('', '');
+        updateSaveButtonState();
+
+        try {
+          var response = await fetch(updateUrl, {
+            method: 'PATCH',
+            headers: {
+              Accept: 'application/json',
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+          });
+          var result = await readApiResponse(response);
+          ['first_name', 'last_name', 'email', 'phone'].forEach(function (field) {
+            if (payload[field]) originalValues[field] = values[field];
+          });
+          cacheLead();
+          showStatus('We have updated your information!', 'success');
+        } catch (error) {
+          showStatus('', '');
+        } finally {
+          isBusy = false;
+          formInputs.forEach(function (input) { input.disabled = false; });
+          updateSaveButtonState();
+        }
       }
 
       formInputs.forEach(function (input) {
@@ -436,11 +634,17 @@
           input.addEventListener('keydown', handlePhoneKeydown);
           input.addEventListener('input', handlePhoneInput);
         } else {
-          input.addEventListener('input', updateSaveButtonState);
+          input.addEventListener('input', function () {
+            showStatus('', '');
+            updateSaveButtonState();
+          });
         }
       });
 
+      form.addEventListener('submit', function (event) { event.preventDefault(); });
+      saveBtn.addEventListener('click', handleSave);
       updateSaveButtonState();
+      initializeLead();
     })();
   </script>
 
